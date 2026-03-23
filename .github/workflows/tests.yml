@@ -1,22 +1,15 @@
-name: brew test-bot
+name: CI
 
 on:
   push:
-    branches:
-      - main
+    branches: [main]
+    paths: ["Formula/**"]
   pull_request:
+    paths: ["Formula/**"]
 
 jobs:
-  test-bot:
-    strategy:
-      matrix:
-        os: [ ubuntu-22.04, macos-15-intel, macos-26 ]
-    runs-on: ${{ matrix.os }}
-    permissions:
-      actions: read
-      checks: read
-      contents: read
-      pull-requests: read
+  audit:
+    runs-on: macos-latest
     steps:
       - name: Set up Homebrew
         id: set-up-homebrew
@@ -24,24 +17,11 @@ jobs:
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Cache Homebrew Bundler RubyGems
-        uses: actions/cache@v4
-        with:
-          path: ${{ steps.set-up-homebrew.outputs.gems-path }}
-          key: ${{ matrix.os }}-rubygems-${{ steps.set-up-homebrew.outputs.gems-hash }}
-          restore-keys: ${{ matrix.os }}-rubygems-
+      - name: Audit formula
+        run: brew audit --tap="$GITHUB_REPOSITORY"
 
-      - run: brew test-bot --only-cleanup-before
+      - name: Install formula
+        run: brew install --formula amatsuzero/m3u8dl/n-m3u8dl-re
 
-      - run: brew test-bot --only-setup
-
-      - run: brew test-bot --only-tap-syntax
-      - run: brew test-bot --only-formulae
-        if: github.event_name == 'pull_request'
-
-      - name: Upload bottles as artifact
-        if: always() && github.event_name == 'pull_request'
-        uses: actions/upload-artifact@v4
-        with:
-          name: bottles_${{ matrix.os }}
-          path: '*.bottle.*'
+      - name: Test formula
+        run: brew test amatsuzero/m3u8dl/n-m3u8dl-re

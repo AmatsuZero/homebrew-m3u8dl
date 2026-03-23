@@ -1,0 +1,49 @@
+name: Update Formula
+
+on:
+  schedule:
+    # 每天 UTC 8:17（北京时间 16:17）检查一次
+    - cron: "17 8 * * *"
+  workflow_dispatch:
+
+jobs:
+  update:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install jq
+        run: sudo apt-get install -y jq
+
+      - name: Check for updates
+        id: update
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          bash update.sh 2>&1 | tee /tmp/update.log
+          if git diff --quiet Formula/; then
+            echo "updated=false" >> "$GITHUB_OUTPUT"
+          else
+            version=$(grep -m1 'version "' Formula/n-m3u8dl-re.rb | sed 's/.*version "//;s/"//')
+            echo "updated=true" >> "$GITHUB_OUTPUT"
+            echo "version=$version" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Create Pull Request
+        if: steps.update.outputs.updated == 'true'
+        uses: peter-evans/create-pull-request@v7
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          commit-message: "n-m3u8dl-re: update to ${{ steps.update.outputs.version }}"
+          title: "n-m3u8dl-re: update to ${{ steps.update.outputs.version }}"
+          body: |
+            Automated formula update.
+
+            New version: `${{ steps.update.outputs.version }}`
+            Source: https://github.com/nilaoda/N_m3u8DL-RE/releases/tag/v${{ steps.update.outputs.version }}
+          branch: update/n-m3u8dl-re-${{ steps.update.outputs.version }}
+          delete-branch: true
