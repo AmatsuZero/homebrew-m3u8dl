@@ -1,17 +1,32 @@
-# AmatsuZero M3u8dl
+# homebrew-m3u8dl
 
-## How do I install these formulae?
+Homebrew tap for [N_m3u8DL-RE](https://github.com/nilaoda/N_m3u8DL-RE) — a cross-platform stream downloader for MPD/M3U8/ISM (DASH/HLS/MSS).
 
-`brew install amatsuzero/m3u8dl/<formula>`
+## Install
 
-Or `brew tap amatsuzero/m3u8dl` and then `brew install <formula>`.
+```bash
+brew install amatsuzero/m3u8dl/n-m3u8dl-re
+```
 
-Or, in a `brew bundle` `Brewfile`:
+Or tap first, then install:
+
+```bash
+brew tap amatsuzero/m3u8dl
+brew install n-m3u8dl-re
+```
+
+Or in a `Brewfile`:
 
 ```ruby
 tap "amatsuzero/m3u8dl"
-brew "<formula>"
+brew "n-m3u8dl-re"
 ```
+
+## Available Formulae
+
+| Formula | Description | Version |
+|---------|-------------|---------|
+| `n-m3u8dl-re` | Cross-platform stream downloader for MPD/M3U8/ISM | 0.5.1-beta |
 
 ## Documentation
 
