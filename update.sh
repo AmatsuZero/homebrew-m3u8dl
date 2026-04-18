@@ -79,7 +79,6 @@ cat > "$FORMULA" << RUBY
 class NM3u8dlRe < Formula
   desc "Cross-platform stream downloader for MPD/M3U8/ISM (DASH/HLS/MSS)"
   homepage "https://github.com/${REPO}"
-  version "${version}"
   license "MIT"
 
   url "${source_url}"

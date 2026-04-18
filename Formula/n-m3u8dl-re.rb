@@ -1,7 +1,6 @@
 class NM3u8dlRe < Formula
   desc "Cross-platform stream downloader for MPD/M3U8/ISM (DASH/HLS/MSS)"
   homepage "https://github.com/nilaoda/N_m3u8DL-RE"
-  version "0.5.1-beta"
   license "MIT"
 
   url "https://github.com/nilaoda/N_m3u8DL-RE/archive/refs/tags/v0.5.1-beta.tar.gz"
