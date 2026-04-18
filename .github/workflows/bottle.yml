@@ -27,10 +27,12 @@ jobs:
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Build bottle
+      - name: Tap local repo and build bottle
         run: |
-          brew install --build-bottle "$GITHUB_WORKSPACE/Formula/n-m3u8dl-re.rb"
-          brew bottle --json --no-rebuild n-m3u8dl-re
+          # Link the checkout as a Homebrew tap
+          brew tap amatsuzero/m3u8dl "$GITHUB_WORKSPACE"
+          brew install --build-bottle amatsuzero/m3u8dl/n-m3u8dl-re
+          brew bottle --json --no-rebuild amatsuzero/m3u8dl/n-m3u8dl-re
 
       - name: Upload bottle artifact
         uses: actions/upload-artifact@v4
