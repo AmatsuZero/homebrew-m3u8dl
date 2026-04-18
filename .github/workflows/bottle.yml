@@ -27,10 +27,8 @@ jobs:
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Tap local repo and build bottle
+      - name: Build bottle
         run: |
-          # Link the checkout as a Homebrew tap
-          brew tap amatsuzero/m3u8dl "$GITHUB_WORKSPACE"
           brew install --build-bottle amatsuzero/m3u8dl/n-m3u8dl-re
           brew bottle --json --no-rebuild amatsuzero/m3u8dl/n-m3u8dl-re
 
