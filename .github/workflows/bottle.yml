@@ -1,0 +1,131 @@
+name: Build Bottles
+
+on:
+  pull_request:
+    paths: ["Formula/**"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  build-bottle:
+    strategy:
+      matrix:
+        include:
+          - os: macos-15
+            platform: arm64_sequoia
+          - os: macos-13
+            platform: ventura
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Homebrew
+        uses: Homebrew/actions/setup-homebrew@main
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build bottle
+        run: |
+          brew install --build-bottle "$GITHUB_WORKSPACE/Formula/n-m3u8dl-re.rb"
+          brew bottle --json --no-rebuild n-m3u8dl-re
+
+      - name: Upload bottle artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: bottle-${{ matrix.platform }}
+          path: |
+            *.bottle.tar.gz
+            *.bottle.json
+
+  update-formula:
+    needs: build-bottle
+    runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request'
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.head_ref }}
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - uses: actions/download-artifact@v4
+        with:
+          path: bottles/
+          merge-multiple: true
+
+      - name: Extract version
+        id: version
+        run: |
+          version=$(grep -m1 'version "' Formula/n-m3u8dl-re.rb | sed 's/.*version "//;s/"//')
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
+      - name: Create GitHub Release and upload bottles
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          TAG="v${{ steps.version.outputs.version }}"
+          gh release create "$TAG" --title "$TAG" --notes "Bottles for n-m3u8dl-re $TAG" 2>/dev/null || true
+          for f in bottles/*.bottle.tar.gz; do
+            gh release upload "$TAG" "$f" --clobber
+          done
+
+      - name: Update formula with bottle block
+        run: |
+          VERSION="${{ steps.version.outputs.version }}"
+          TAG="v${VERSION}"
+          ROOT_URL="https://github.com/${{ github.repository }}/releases/download/${TAG}"
+
+          # Parse bottle JSON files and generate bottle block
+          python3 - "$ROOT_URL" <<'PYEOF'
+          import json, glob, sys
+
+          root_url = sys.argv[1]
+          jsons = sorted(glob.glob("bottles/*.bottle.json"))
+          entries = {}
+          for jf in jsons:
+              with open(jf) as f:
+                  data = json.load(f)
+              for formula_name, info in data.items():
+                  bottle = info["bottle"]
+                  for tag, details in bottle["tags"].items():
+                      entries[tag] = details["sha256"]
+
+          lines = [f'  bottle do', f'    root_url "{root_url}"']
+          for tag in sorted(entries.keys()):
+              lines.append(f'    sha256 cellar: :any_skip_relocation, {tag}: "{entries[tag]}"')
+          lines.append('  end')
+
+          block = "\n".join(lines) + "\n"
+          print(block)
+
+          with open("bottle_block.txt", "w") as f:
+              f.write(block)
+          PYEOF
+
+          # Insert or replace bottle block in formula
+          ruby -e '
+            formula = File.read("Formula/n-m3u8dl-re.rb")
+            block = File.read("bottle_block.txt")
+
+            if formula.include?("bottle do")
+              formula.gsub!(/  bottle do.*?  end\n/m, block)
+            else
+              formula.sub!(/(\n  depends_on)/, "\n#{block}\n\\1")
+            end
+
+            File.write("Formula/n-m3u8dl-re.rb", formula)
+          '
+
+      - name: Commit updated formula
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add Formula/n-m3u8dl-re.rb
+          if ! git diff --staged --quiet; then
+            git commit -m "bottle: add bottles for ${{ steps.version.outputs.version }}"
+            git push
+          else
+            echo "No bottle changes to commit"
+          fi

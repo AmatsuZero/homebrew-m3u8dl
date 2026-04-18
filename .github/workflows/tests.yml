@@ -20,8 +20,8 @@ jobs:
       - name: Audit formula
         run: brew audit --tap="$GITHUB_REPOSITORY"
 
-      - name: Install formula
-        run: brew install --formula amatsuzero/m3u8dl/n-m3u8dl-re
+      - name: Install formula (build from source)
+        run: brew install --build-from-source --formula amatsuzero/m3u8dl/n-m3u8dl-re
 
       - name: Test formula
         run: brew test amatsuzero/m3u8dl/n-m3u8dl-re
