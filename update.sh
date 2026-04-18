@@ -3,9 +3,21 @@ set -euo pipefail
 
 REPO="nilaoda/N_m3u8DL-RE"
 FORMULA="$(cd "$(dirname "$0")" && pwd)/Formula/n-m3u8dl-re.rb"
+DOTNET_SDK_VERSION="10.0.101"
 
-# 平台 -> asset 文件名中的关键词
+# .NET SDK 下载 URL 模板
+DOTNET_SDK_BASE="https://builds.dotnet.microsoft.com/dotnet/Sdk/${DOTNET_SDK_VERSION}"
+
+# 平台 -> asset 文件名中的关键词（用于二进制 release asset 匹配）
 PLATFORMS=("osx-arm64" "osx-x64" "linux-arm64" "linux-x64")
+
+# .NET SDK 平台映射（Homebrew 平台 -> SDK 文件名后缀）
+declare -A SDK_PLATFORMS=(
+  ["osx-arm64"]="osx-arm64"
+  ["osx-x64"]="osx-x64"
+  ["linux-arm64"]="linux-arm64"
+  ["linux-x64"]="linux-x64"
+)
 
 info()  { printf "\033[34m==>\033[0m \033[1m%s\033[0m\n" "$*"; }
 error() { printf "\033[31mError:\033[0m %s\n" "$*" >&2; exit 1; }
@@ -40,32 +52,23 @@ fi
 
 info "New version found: $current_version -> $version"
 
-# ── 查找各平台 asset URL ─────────────────────────────────────────
-declare -A asset_urls
-assets=$(echo "$release_json" | jq -r '.assets[].browser_download_url')
+# ── 计算源码 tarball SHA256 ──────────────────────────────────────
+source_url="https://github.com/${REPO}/archive/refs/tags/${tag}.tar.gz"
+info "Downloading source tarball ..."
+source_sha256=$(curl -sfL "${auth_header[@]+"${auth_header[@]}"}" "$source_url" | shasum -a 256 | awk '{print $1}')
+echo "  Source SHA256: ${source_sha256}"
 
+# ── 计算 .NET SDK 各平台 SHA256 ─────────────────────────────────
+declare -A sdk_checksums
 for platform in "${PLATFORMS[@]}"; do
-  url=$(echo "$assets" | grep "${platform}" | grep '\.tar\.gz$' | head -1)
-  [ -z "$url" ] && error "No asset found for platform: $platform"
-  asset_urls[$platform]="$url"
+  sdk_suffix="${SDK_PLATFORMS[$platform]}"
+  sdk_url="${DOTNET_SDK_BASE}/dotnet-sdk-${DOTNET_SDK_VERSION}-${sdk_suffix}.tar.gz"
+  info "Downloading .NET SDK (${sdk_suffix}) ..."
+  sdk_checksums[$platform]=$(curl -sfL "$sdk_url" | shasum -a 256 | awk '{print $1}')
+  echo "  SDK SHA256 [${platform}]: ${sdk_checksums[$platform]}"
 done
 
-# ── 下载并计算 SHA256 ────────────────────────────────────────────
-tmpdir=$(mktemp -d)
-trap 'rm -rf "$tmpdir"' EXIT
-
-declare -A checksums
-for platform in "${PLATFORMS[@]}"; do
-  url="${asset_urls[$platform]}"
-  filename=$(basename "$url")
-  info "Downloading $filename ..."
-  curl -sfL "${auth_header[@]+"${auth_header[@]}"}" -o "$tmpdir/$filename" "$url" \
-    || error "Download failed: $url"
-  checksums[$platform]=$(shasum -a 256 "$tmpdir/$filename" | awk '{print $1}')
-  echo "  SHA256: ${checksums[$platform]}"
-done
-
-# ── 从实际 asset 文件名中提取版本号的数字部分（用于 test block）──
+# ── 从实际版本号中提取数字部分（用于 test block）──────────────────
 # e.g. "0.5.1-beta" -> "0.5.1"
 version_numeric=$(echo "$version" | grep -oE '^[0-9]+\.[0-9]+\.[0-9]+')
 
@@ -79,30 +82,58 @@ class NM3u8dlRe < Formula
   version "${version}"
   license "MIT"
 
+  url "${source_url}"
+  sha256 "${source_sha256}"
+
   depends_on "ffmpeg"
 
-  on_macos do
-    if Hardware::CPU.arm?
-      url "${asset_urls[osx-arm64]}"
-      sha256 "${checksums[osx-arm64]}"
-    else
-      url "${asset_urls[osx-x64]}"
-      sha256 "${checksums[osx-x64]}"
+  resource "dotnet-sdk" do
+    on_macos do
+      if Hardware::CPU.arm?
+        url "${DOTNET_SDK_BASE}/dotnet-sdk-${DOTNET_SDK_VERSION}-osx-arm64.tar.gz"
+        sha256 "${sdk_checksums[osx-arm64]}"
+      else
+        url "${DOTNET_SDK_BASE}/dotnet-sdk-${DOTNET_SDK_VERSION}-osx-x64.tar.gz"
+        sha256 "${sdk_checksums[osx-x64]}"
+      end
     end
-  end
-
-  on_linux do
-    if Hardware::CPU.arm?
-      url "${asset_urls[linux-arm64]}"
-      sha256 "${checksums[linux-arm64]}"
-    else
-      url "${asset_urls[linux-x64]}"
-      sha256 "${checksums[linux-x64]}"
+    on_linux do
+      if Hardware::CPU.arm?
+        url "${DOTNET_SDK_BASE}/dotnet-sdk-${DOTNET_SDK_VERSION}-linux-arm64.tar.gz"
+        sha256 "${sdk_checksums[linux-arm64]}"
+      else
+        url "${DOTNET_SDK_BASE}/dotnet-sdk-${DOTNET_SDK_VERSION}-linux-x64.tar.gz"
+        sha256 "${sdk_checksums[linux-x64]}"
+      end
     end
   end
 
   def install
-    bin.install "N_m3u8DL-RE"
+    # Install .NET SDK to a temporary build directory
+    dotnet_sdk_dir = buildpath/"dotnet-sdk"
+    dotnet_sdk_dir.mkpath
+    resource("dotnet-sdk").stage(dotnet_sdk_dir)
+
+    ENV["DOTNET_ROOT"] = dotnet_sdk_dir.to_s
+    ENV.prepend_path "PATH", dotnet_sdk_dir.to_s
+    ENV["DOTNET_CLI_TELEMETRY_OPTOUT"] = "1"
+    ENV["DOTNET_NOLOGO"] = "1"
+
+    # Select runtime identifier based on current platform
+    rid = if OS.mac?
+      "osx-#{Hardware::CPU.arm? ? "arm64" : "x64"}"
+    else
+      "linux-#{Hardware::CPU.arm? ? "arm64" : "x64"}"
+    end
+
+    # Build (matching upstream CI workflow)
+    system dotnet_sdk_dir/"dotnet", "publish",
+           "src/N_m3u8DL-RE",
+           "-r", rid,
+           "-c", "Release",
+           "-o", buildpath/"output"
+
+    bin.install buildpath/"output/N_m3u8DL-RE"
   end
 
   test do
@@ -114,5 +145,5 @@ RUBY
 info "Formula updated to ${version}"
 echo ""
 echo "Next steps:"
-echo "  brew upgrade n-m3u8dl-re   # upgrade locally"
+echo "  brew install --build-from-source n-m3u8dl-re   # install from source"
 echo "  git add -A && git commit -m 'n-m3u8dl-re: update to ${version}'"
