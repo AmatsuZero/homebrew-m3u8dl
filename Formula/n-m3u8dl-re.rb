@@ -3,8 +3,8 @@ class NM3u8dlRe < Formula
   homepage "https://github.com/nilaoda/N_m3u8DL-RE"
   license "MIT"
 
-  url "https://github.com/nilaoda/N_m3u8DL-RE/archive/refs/tags/v0.5.1-beta.tar.gz"
-  sha256 "55559fec4deef7e40a4d45eebb699865f01d04f7e72110ce5d11b4ca3e655a93"
+  url "https://github.com/nilaoda/N_m3u8DL-RE/archive/refs/tags/v0.6.0-beta.tar.gz"
+  sha256 "7ecaf9614ac7d2897cb9c3d07c02e4ff6e4e19ce327cacbda916e6fb44b67d6d"
 
   depends_on "ffmpeg"
 
@@ -58,6 +58,6 @@ class NM3u8dlRe < Formula
   end
 
   test do
-    assert_match "0.5.1", shell_output("#{bin}/N_m3u8DL-RE --version 2>&1")
+    assert_match "0.6.0", shell_output("#{bin}/N_m3u8DL-RE --version 2>&1")
   end
 end

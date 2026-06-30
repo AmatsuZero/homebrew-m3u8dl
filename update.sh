@@ -1,78 +1,81 @@
 #!/bin/bash
-set -euo pipefail
+set -uo pipefail
 
 REPO="nilaoda/N_m3u8DL-RE"
 FORMULA="$(cd "$(dirname "$0")" && pwd)/Formula/n-m3u8dl-re.rb"
 DOTNET_SDK_VERSION="10.0.101"
-
-# .NET SDK 下载 URL 模板
 DOTNET_SDK_BASE="https://builds.dotnet.microsoft.com/dotnet/Sdk/${DOTNET_SDK_VERSION}"
 
-# 平台 -> asset 文件名中的关键词（用于二进制 release asset 匹配）
-PLATFORMS=("osx-arm64" "osx-x64" "linux-arm64" "linux-x64")
-
-# .NET SDK 平台映射（Homebrew 平台 -> SDK 文件名后缀）
-declare -A SDK_PLATFORMS=(
-  ["osx-arm64"]="osx-arm64"
-  ["osx-x64"]="osx-x64"
-  ["linux-arm64"]="linux-arm64"
-  ["linux-x64"]="linux-x64"
-)
-
 info()  { printf "\033[34m==>\033[0m \033[1m%s\033[0m\n" "$*"; }
-error() { printf "\033[31mError:\033[0m %s\n" "$*" >&2; exit 1; }
+err()   { printf "\033[31mError:\033[0m %s\n" "$*" >&2; exit 1; }
 
-# ── 构建 curl 认证头（可选，避免 API 限流）─────────────────────────
-auth_header=()
-if [ -n "${GITHUB_TOKEN:-}" ]; then
-  auth_header=(-H "Authorization: token ${GITHUB_TOKEN}")
-fi
+# ── curl wrapper with optional GitHub auth ────────────────────────
+_curl() {
+  if [ -n "${GITHUB_TOKEN:-}" ]; then
+    curl -sfL -H "Authorization: token ${GITHUB_TOKEN}" "$@"
+  else
+    curl -sfL "$@"
+  fi
+}
 
-# ── 获取最新 release（含 pre-release）────────────────────────────
+# ── Run command, capture output, exit on failure ──────────────────
+# Usage: run_cmd cmd [args...] > "$output_file"
+# On failure, prints stderr and exits via err().
+run_cmd() {
+  local _tmp; _tmp=$(mktemp /tmp/update.XXXXXX)
+  if "$@" > "$_tmp" 2>&1; then
+    cat "$_tmp"
+  else
+    err "$(cat "$_tmp")"
+  fi
+  rm -f "$_tmp"
+}
+
+# ── Get latest release ────────────────────────────────────────────
 info "Fetching latest release from $REPO ..."
-release_json=$(curl -sfL "${auth_header[@]+"${auth_header[@]}"}" \
-  "https://api.github.com/repos/${REPO}/releases?per_page=5" \
-  | tr -d '\000-\010\013\014\016-\037' \
-  | jq '[.[] | select(.draft | not)] | .[0] | {tag_name, assets}') \
-  || error "Failed to fetch release info (try setting GITHUB_TOKEN)"
-
+release_raw=$(run_cmd _curl "https://api.github.com/repos/${REPO}/releases?per_page=5")
+release_json=$(echo "$release_raw" | tr -d '\000-\010\013\014\016-\037' | jq '[.[] | select(.draft | not)] | .[0] | {tag_name, assets}')
+[ -z "$release_json" ] && err "Failed to parse release info"
 tag=$(echo "$release_json" | jq -r '.tag_name')
-[ "$tag" = "null" ] && error "Could not parse tag_name"
-
-# 去掉 v 前缀得到 version
+[ "$tag" = "null" ] && err "Could not parse tag_name"
 version="${tag#v}"
 
-# ── 比较版本 ──────────────────────────────────────────────────────
-current_version=$(grep -m1 'version "' "$FORMULA" | sed 's/.*version "//;s/"//')
-
+# ── Compare version ───────────────────────────────────────────────
+# Extract version from URL pattern: .../tags/v<version>.tar.gz
+current_version=$(grep -oE 'refs/tags/v[^"]+\.tar\.gz' "$FORMULA" | sed 's|refs/tags/v||; s|\.tar\.gz||')
 if [ "$current_version" = "$version" ]; then
   info "Already up to date: $version"
   exit 0
 fi
-
 info "New version found: $current_version -> $version"
 
-# ── 计算源码 tarball SHA256 ──────────────────────────────────────
+# ── Source tarball SHA256 ─────────────────────────────────────────
 source_url="https://github.com/${REPO}/archive/refs/tags/${tag}.tar.gz"
 info "Downloading source tarball ..."
-source_sha256=$(curl -sfL "${auth_header[@]+"${auth_header[@]}"}" "$source_url" | shasum -a 256 | awk '{print $1}')
+source_sha256=$(run_cmd _curl -o - "$source_url" | shasum -a 256 | awk '{print $1}')
 echo "  Source SHA256: ${source_sha256}"
 
-# ── 计算 .NET SDK 各平台 SHA256 ─────────────────────────────────
-declare -A sdk_checksums
-for platform in "${PLATFORMS[@]}"; do
-  sdk_suffix="${SDK_PLATFORMS[$platform]}"
-  sdk_url="${DOTNET_SDK_BASE}/dotnet-sdk-${DOTNET_SDK_VERSION}-${sdk_suffix}.tar.gz"
-  info "Downloading .NET SDK (${sdk_suffix}) ..."
-  sdk_checksums[$platform]=$(curl -sfL "$sdk_url" | shasum -a 256 | awk '{print $1}')
-  echo "  SDK SHA256 [${platform}]: ${sdk_checksums[$platform]}"
-done
+# ── .NET SDK SHA256 for each platform ─────────────────────────────
+info "Downloading .NET SDK (osx-arm64) ..."
+sdk_osx_arm64_sha256=$(run_cmd curl -sfL -o - "${DOTNET_SDK_BASE}/dotnet-sdk-${DOTNET_SDK_VERSION}-osx-arm64.tar.gz" | shasum -a 256 | awk '{print $1}')
+echo "  SDK SHA256 [osx-arm64]: ${sdk_osx_arm64_sha256}"
 
-# ── 从实际版本号中提取数字部分（用于 test block）──────────────────
-# e.g. "0.5.1-beta" -> "0.5.1"
+info "Downloading .NET SDK (osx-x64) ..."
+sdk_osx_x64_sha256=$(run_cmd curl -sfL -o - "${DOTNET_SDK_BASE}/dotnet-sdk-${DOTNET_SDK_VERSION}-osx-x64.tar.gz" | shasum -a 256 | awk '{print $1}')
+echo "  SDK SHA256 [osx-x64]: ${sdk_osx_x64_sha256}"
+
+info "Downloading .NET SDK (linux-arm64) ..."
+sdk_linux_arm64_sha256=$(run_cmd curl -sfL -o - "${DOTNET_SDK_BASE}/dotnet-sdk-${DOTNET_SDK_VERSION}-linux-arm64.tar.gz" | shasum -a 256 | awk '{print $1}')
+echo "  SDK SHA256 [linux-arm64]: ${sdk_linux_arm64_sha256}"
+
+info "Downloading .NET SDK (linux-x64) ..."
+sdk_linux_x64_sha256=$(run_cmd curl -sfL -o - "${DOTNET_SDK_BASE}/dotnet-sdk-${DOTNET_SDK_VERSION}-linux-x64.tar.gz" | shasum -a 256 | awk '{print $1}')
+echo "  SDK SHA256 [linux-x64]: ${sdk_linux_x64_sha256}"
+
+# ── Extract numeric version for test block ────────────────────────
 version_numeric=$(echo "$version" | grep -oE '^[0-9]+\.[0-9]+\.[0-9]+')
 
-# ── 生成新 formula ───────────────────────────────────────────────
+# ── Generate formula ──────────────────────────────────────────────
 info "Updating formula ..."
 
 cat > "$FORMULA" << RUBY
@@ -90,25 +93,24 @@ class NM3u8dlRe < Formula
     on_macos do
       if Hardware::CPU.arm?
         url "${DOTNET_SDK_BASE}/dotnet-sdk-${DOTNET_SDK_VERSION}-osx-arm64.tar.gz"
-        sha256 "${sdk_checksums[osx-arm64]}"
+        sha256 "${sdk_osx_arm64_sha256}"
       else
         url "${DOTNET_SDK_BASE}/dotnet-sdk-${DOTNET_SDK_VERSION}-osx-x64.tar.gz"
-        sha256 "${sdk_checksums[osx-x64]}"
+        sha256 "${sdk_osx_x64_sha256}"
       end
     end
     on_linux do
       if Hardware::CPU.arm?
         url "${DOTNET_SDK_BASE}/dotnet-sdk-${DOTNET_SDK_VERSION}-linux-arm64.tar.gz"
-        sha256 "${sdk_checksums[linux-arm64]}"
+        sha256 "${sdk_linux_arm64_sha256}"
       else
         url "${DOTNET_SDK_BASE}/dotnet-sdk-${DOTNET_SDK_VERSION}-linux-x64.tar.gz"
-        sha256 "${sdk_checksums[linux-x64]}"
+        sha256 "${sdk_linux_x64_sha256}"
       end
     end
   end
 
   def install
-    # Install .NET SDK to a temporary build directory
     dotnet_sdk_dir = buildpath/"dotnet-sdk"
     dotnet_sdk_dir.mkpath
     resource("dotnet-sdk").stage(dotnet_sdk_dir)
@@ -118,14 +120,12 @@ class NM3u8dlRe < Formula
     ENV["DOTNET_CLI_TELEMETRY_OPTOUT"] = "1"
     ENV["DOTNET_NOLOGO"] = "1"
 
-    # Select runtime identifier based on current platform
     rid = if OS.mac?
       "osx-#{Hardware::CPU.arm? ? "arm64" : "x64"}"
     else
       "linux-#{Hardware::CPU.arm? ? "arm64" : "x64"}"
     end
 
-    # Build (matching upstream CI workflow)
     system dotnet_sdk_dir/"dotnet", "publish",
            "src/N_m3u8DL-RE",
            "-r", rid,
