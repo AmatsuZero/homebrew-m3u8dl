@@ -142,6 +142,14 @@ end
 RUBY
 
 info "Formula updated to ${version}"
+
+# ── Update README version ─────────────────────────────────────────
+README="$(cd "$(dirname "$0")" && pwd)/README.md"
+if [ -f "$README" ]; then
+  sed -i '' -E "s/(\| \`n-m3u8dl-re\` \|.*\| )[^ ]+ \|$/\1${version} |/" "$README" 2>/dev/null || \
+  sed -i    -E "s/(\| \`n-m3u8dl-re\` \|.*\| )[^ ]+ \|$/\1${version} |/" "$README"
+fi
+
 echo ""
 echo "Next steps:"
 echo "  brew install --build-from-source n-m3u8dl-re   # install from source"

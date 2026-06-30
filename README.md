@@ -26,7 +26,7 @@ brew "n-m3u8dl-re"
 
 | Formula | Description | Version |
 |---------|-------------|---------|
-| `n-m3u8dl-re` | Cross-platform stream downloader for MPD/M3U8/ISM | 0.5.1-beta |
+| `n-m3u8dl-re` | Cross-platform stream downloader for MPD/M3U8/ISM | 0.6.0-beta |
 
 ## Documentation
 
